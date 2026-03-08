@@ -1,1 +1,1 @@
-worker: python bot.py
+worker: bash -c "apt-get update && apt-get install -y ffmpeg && python bot.py"
