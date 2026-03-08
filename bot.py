@@ -1,46 +1,51 @@
 import os
 import subprocess
-from telebot import TeleBot
-from dotenv import load_dotenv
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
-load_dotenv()
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-bot = TeleBot(TOKEN)
+TOKEN = os.getenv("BOT_TOKEN")
 
-@bot.message_handler(content_types=['video'])
-def handle_video(message):
-    chat_id = message.chat.id
-    
-    if message.video.file_size > 50 * 1024 * 1024:
-        bot.send_message(chat_id, "الفيديو كبير جدًا، حاول فيديو أصغر من 50MB")
-        return
+async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
 
-    file_info = bot.get_file(message.video.file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
-    
-    video_path = "temp_video.mp4"
-    voice_path = "voice.ogg"
+    # تنزيل الفيديو
+    video_file = await update.message.video.get_file()
+    file_path = f"{user_id}_video.mp4"
+    await video_file.download_to_drive(file_path)
 
-    with open(video_path, 'wb') as f:
-        f.write(downloaded_file)
-    
-    bot.send_message(chat_id, "جاري تحويل الفيديو إلى رسالة صوتية...")
+    # تحويل الفيديو إلى بصمة صوتية (Voice Message)
+    voice_path = f"{user_id}_voice.ogg"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", file_path, "-vn", "-ar", "48000", "-ac", "1", "-c:a", "libopus", voice_path],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
 
-    # تحويل الفيديو إلى OGG مباشرة باستخدام ffmpeg
-    subprocess.run([
-        "ffmpeg",
-        "-i", video_path,
-        "-vn",            # بدون الفيديو
-        "-c:a", "libopus", # صيغة teleram الصوتية
-        "-b:a", "64k",
-        voice_path,
-        "-y"              # استبدال إذا موجود
-    ])
+        # إرسال الرسالة الصوتية
+        await update.message.reply_voice(
+            voice=open(voice_path, "rb"),
+            caption="تم تحويل الفيديو الى بصمة صوتية 🎙️\nصانع البوت ----» @wi6j1"
+        )
 
-    with open(voice_path, "rb") as v:
-        bot.send_voice(chat_id, v, caption="ها هي الرسالة الصوتية!")
+    except Exception as e:
+        await update.message.reply_text(
+            f"حدث خطأ أثناء التحويل: {e}\nصانع البوت ----» @wi6j1"
+        )
 
-    os.remove(video_path)
-    os.remove(voice_path)
+    finally:
+        # حذف الملفات المؤقتة
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        if os.path.exists(voice_path):
+            os.remove(voice_path)
 
-bot.infinity_polling()
+# إعداد التطبيق
+app = ApplicationBuilder().token(TOKEN).build()
+
+# إضافة handler للفيديو
+app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+
+# تشغيل البوت
+app.run_polling()
